@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1773288419635,
+    "name": "Jesse Emmanuel",
+    "phone": "447878898024",
+    "service": "Skin fade",
+    "date": "Friday",
+    "time": "1pm",
+    "status": "cancelled",
+    "createdAt": "2026-03-12T04:06:59.635Z",
+    "cancelledAt": "2026-04-02T21:59:50.441Z"
+  },
+  {
+    "id": 1773326090715,
+    "name": "Kwaku jay",
+    "phone": "447878898024",
+    "service": "Haircut and beard",
+    "date": "2026-04-10",
+    "time": "10:30",
+    "status": "cancelled",
+    "createdAt": "2026-03-12T14:34:50.715Z",
+    "reminderAt": "2026-04-09T09:30:00.000Z",
+    "reminderSent": false,
+    "updatedAt": "2026-04-02T21:26:29.640Z",
+    "cancelledAt": "2026-04-02T21:59:35.222Z"
+  },
+  {
+    "id": 1774475629881,
+    "name": "Jesse Emmanuel",
+    "phone": "447878898024",
+    "service": "Line up",
+    "date": "26 march",
+    "time": "9am",
+    "status": "cancelled",
+    "createdAt": "2026-03-25T21:53:49.881Z",
+    "cancelledAt": "2026-04-02T21:25:07.985Z"
+  }
+]
