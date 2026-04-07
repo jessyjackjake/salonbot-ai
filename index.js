@@ -265,13 +265,20 @@ app.post("/webhook", async (req, res) => {
         const from = message.from;
         const messageText = message.text?.body?.trim();
 
-        // Ignore duplicates
-        if (processedMessageIds.has(messageId)) {
-            console.log("Duplicate message ignored:", messageId);
+        // ✅ ADD THIS BLOCK HERE
+        const messageTimestamp = Number(message.timestamp);
+        const nowInSeconds = Math.floor(Date.now() / 1000);
+
+        // Ignore old delayed webhook messages (older than 2 minutes)
+        if (messageTimestamp && nowInSeconds - messageTimestamp > 120) {
+            console.log("Old message ignored:", {
+                id: messageId,
+                from,
+                text: messageText,
+                ageInSeconds: nowInSeconds - messageTimestamp
+            });
             return;
         }
-
-        processedMessageIds.add(messageId);
 
         // Clean up old processed IDs after 10 minutes
         setTimeout(() => {
