@@ -243,41 +243,71 @@ app.get("/webhook", (req, res) => {
     res.sendStatus(403);
 });
 
+const processedMessageIds = new Set();
+
 app.post("/webhook", async (req, res) => {
+    // Acknowledge Meta immediately to reduce webhook retries
+    res.sendStatus(200);
+
     try {
         const entry = req.body.entry?.[0];
         const change = entry?.changes?.[0];
         const value = change?.value;
         const messages = value?.messages;
 
+        // Ignore non-message events such as status updates
         if (!messages || messages.length === 0) {
-            return res.sendStatus(200);
+            return;
         }
 
         const message = messages[0];
+        const messageId = message.id;
         const from = message.from;
         const messageText = message.text?.body?.trim();
 
+        // Ignore duplicates
+        if (processedMessageIds.has(messageId)) {
+            console.log("Duplicate message ignored:", messageId);
+            return;
+        }
+
+        processedMessageIds.add(messageId);
+
+        // Clean up old processed IDs after 10 minutes
+        setTimeout(() => {
+            processedMessageIds.delete(messageId);
+        }, 10 * 60 * 1000);
+
+        // Ignore non-text messages
         if (!messageText) {
-            return res.sendStatus(200);
+            return;
         }
 
         const lowerText = messageText.toLowerCase();
         let replyText = "";
 
-        if (!userSessions[from]) {
+        let session = userSessions[from];
+
+        // Only create a new session when the user intentionally starts
+        if (!session && ["hi", "hello", "menu"].includes(lowerText)) {
             userSessions[from] = {
                 step: "menu",
                 booking: {},
                 rescheduleBookingId: null
             };
+            session = userSessions[from];
         }
 
-        const session = userSessions[from];
+        // If no session exists and the user didn't start properly
+        if (!session) {
+            await sendWhatsAppMessage(from, "Reply 'Hi' to see the menu again.");
+            return;
+        }
+
         const latestBooking = await getLatestConfirmedBookingByPhone(from);
 
         if (
-            (lowerText === "hi" || lowerText === "hello" || lowerText === "menu") &&
+            ["hi", "hello", "menu"].includes(lowerText) &&
             latestBooking
         ) {
             session.step = "menu";
@@ -292,7 +322,7 @@ app.post("/webhook", async (req, res) => {
                 `3. Opening hours\n` +
                 `4. Cancel latest booking\n` +
                 `5. Reschedule latest booking`;
-        } else if (lowerText === "hi" || lowerText === "hello" || lowerText === "menu") {
+        } else if (["hi", "hello", "menu"].includes(lowerText)) {
             session.step = "menu";
             session.booking = {};
             session.rescheduleBookingId = null;
@@ -483,10 +513,8 @@ app.post("/webhook", async (req, res) => {
         }
 
         await sendWhatsAppMessage(from, replyText);
-        res.sendStatus(200);
     } catch (error) {
         console.error("Reply error:", error.response?.data || error.message);
-        res.sendStatus(500);
     }
 });
 
