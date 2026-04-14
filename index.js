@@ -1,6 +1,6 @@
 require("dotenv").config();
-const mongoose = require("mongoose");
 const express = require("express");
+const mongoose = require("mongoose");
 const axios = require("axios");
 const Booking = require("./models/Booking");
 
@@ -11,11 +11,16 @@ const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const userSessions = {};
+const processedMessageIds = new Set();
 
 mongoose
     .connect(process.env.MONGODB_URI)
-    .then(() => console.log("MongoDB connected successfully"))
-    .catch((error) => console.error("MongoDB connection error:", error.message));
+    .then(() => {
+        console.log("MongoDB connected successfully");
+    })
+    .catch((error) => {
+        console.error("MongoDB connection error:", error.message);
+    });
 
 function isValidDate(dateStr) {
     return /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
@@ -35,16 +40,16 @@ function buildReminderTime(date, time) {
 }
 
 async function getLatestConfirmedBookingByPhone(phone) {
-    return await Booking.findOne({
-        phone,
+    return Booking.findOne({
+        phone: phone,
         status: "confirmed"
     }).sort({ createdAt: -1 });
 }
 
 async function isSlotTaken(date, time, excludeBookingId = null) {
     const query = {
-        date,
-        time,
+        date: date,
+        time: time,
         status: "confirmed"
     };
 
@@ -52,17 +57,19 @@ async function isSlotTaken(date, time, excludeBookingId = null) {
         query._id = { $ne: excludeBookingId };
     }
 
-    const existing = await Booking.findOne(query);
-    return !!existing;
+    const existingBooking = await Booking.findOne(query);
+    return !!existingBooking;
 }
 
 async function cancelLatestBooking(phone) {
     const latestBooking = await Booking.findOne({
-        phone,
+        phone: phone,
         status: "confirmed"
     }).sort({ createdAt: -1 });
 
-    if (!latestBooking) return null;
+    if (!latestBooking) {
+        return null;
+    }
 
     latestBooking.status = "cancelled";
     latestBooking.cancelledAt = new Date();
@@ -76,8 +83,8 @@ async function sendWhatsAppMessage(to, body) {
         `https://graph.facebook.com/v22.0/${process.env.PHONE_NUMBER_ID}/messages`,
         {
             messaging_product: "whatsapp",
-            to,
-            text: { body }
+            to: to,
+            text: { body: body }
         },
         {
             headers: {
@@ -88,7 +95,6 @@ async function sendWhatsAppMessage(to, body) {
     );
 }
 
-// 24-hour reminder checker
 setInterval(async () => {
     try {
         const now = new Date();
@@ -101,12 +107,12 @@ setInterval(async () => {
 
         for (const booking of bookings) {
             const reminderMessage =
-                `Reminder ⏰\n\n` +
+                `Reminder\n\n` +
                 `This is a 24-hour reminder for your barber appointment.\n\n` +
                 `Service: ${booking.service}\n` +
                 `Date: ${booking.date}\n` +
                 `Time: ${booking.time}\n\n` +
-                `We look forward to seeing you at BarberBot 💈`;
+                `We look forward to seeing you at BarberBot.`;
 
             try {
                 await sendWhatsAppMessage(booking.phone, reminderMessage);
@@ -115,10 +121,10 @@ setInterval(async () => {
                 await booking.save();
 
                 console.log(`Reminder sent to ${booking.name}`);
-            } catch (err) {
+            } catch (error) {
                 console.error(
                     `Failed to send reminder for booking ${booking._id}:`,
-                    err.response?.data || err.message
+                    error.response?.data || error.message
                 );
             }
         }
@@ -135,98 +141,70 @@ app.get("/bookings", async (req, res) => {
     try {
         const bookings = await Booking.find().sort({ createdAt: -1 });
 
-        const rows = bookings
-            .map(
-                (booking) => `
-        <tr>
-          <td>${booking._id}</td>
-          <td>${booking.name || "-"}</td>
-          <td>${booking.phone || "-"}</td>
-          <td>${booking.service || "-"}</td>
-          <td>${booking.date || "-"}</td>
-          <td>${booking.time || "-"}</td>
-          <td>${booking.status || "-"}</td>
-          <td>${booking.createdAt ? new Date(booking.createdAt).toLocaleString() : "-"}</td>
-        </tr>
-      `
-            )
-            .join("");
+        let rows = "";
+
+        bookings.forEach((booking) => {
+            rows += `
+                <tr>
+                    <td>${booking.name || ""}</td>
+                    <td>${booking.phone || ""}</td>
+                    <td>${booking.service || ""}</td>
+                    <td>${booking.date || ""}</td>
+                    <td>${booking.time || ""}</td>
+                    <td>${booking.status || ""}</td>
+                </tr>
+            `;
+        });
 
         const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>BarberBot Admin Dashboard</title>
-        <meta charset="UTF-8" />
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            margin: 40px;
-            background: #f7f7f7;
-            color: #222;
-          }
-          h1 {
-            margin-bottom: 10px;
-          }
-          p {
-            margin-bottom: 25px;
-            color: #555;
-          }
-          .card {
-            background: #fff;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-            overflow-x: auto;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 900px;
-          }
-          th, td {
-            border-bottom: 1px solid #ddd;
-            padding: 12px;
-            text-align: left;
-          }
-          th {
-            background: #111;
-            color: #fff;
-          }
-          tr:hover {
-            background: #f1f1f1;
-          }
-        </style>
-      </head>
-      <body>
-        <h1>BarberBot Admin Dashboard</h1>
-        <p>View all customer bookings submitted through WhatsApp.</p>
-        <div class="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Booking ID</th>
-                <th>Name</th>
-                <th>Phone</th>
-                <th>Service</th>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Created At</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows || `<tr><td colspan="8">No bookings found.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </body>
-      </html>
-    `;
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Bookings</title>
+                <meta charset="UTF-8">
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        margin: 30px;
+                    }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                    }
+                    th, td {
+                        border: 1px solid #ccc;
+                        padding: 10px;
+                        text-align: left;
+                    }
+                    th {
+                        background-color: #f2f2f2;
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>Bookings</h1>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Service</th>
+                            <th>Date</th>
+                            <th>Time</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows || '<tr><td colspan="6">No bookings found</td></tr>'}
+                    </tbody>
+                </table>
+            </body>
+            </html>
+        `;
 
         res.send(html);
     } catch (error) {
-        res.status(500).send("Failed to load dashboard");
+        res.status(500).send("Could not load bookings");
     }
 });
 
@@ -236,17 +214,14 @@ app.get("/webhook", (req, res) => {
     const challenge = req.query["hub.challenge"];
 
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
-        console.log("Webhook verified successfully!");
+        console.log("Webhook verified successfully");
         return res.status(200).send(challenge);
     }
 
     res.sendStatus(403);
 });
 
-const processedMessageIds = new Set();
-
 app.post("/webhook", async (req, res) => {
-    // Acknowledge Meta immediately to reduce webhook retries
     res.sendStatus(200);
 
     try {
@@ -255,7 +230,6 @@ app.post("/webhook", async (req, res) => {
         const value = change?.value;
         const messages = value?.messages;
 
-        // Ignore non-message events such as status updates
         if (!messages || messages.length === 0) {
             return;
         }
@@ -265,38 +239,39 @@ app.post("/webhook", async (req, res) => {
         const from = message.from;
         const messageText = message.text?.body?.trim();
 
-        // ✅ ADD THIS BLOCK HERE
+        if (!messageText) {
+            return;
+        }
+
         const messageTimestamp = Number(message.timestamp);
         const nowInSeconds = Math.floor(Date.now() / 1000);
 
-        // Ignore old delayed webhook messages (older than 2 minutes)
         if (messageTimestamp && nowInSeconds - messageTimestamp > 120) {
             console.log("Old message ignored:", {
                 id: messageId,
-                from,
+                from: from,
                 text: messageText,
                 ageInSeconds: nowInSeconds - messageTimestamp
             });
             return;
         }
 
-        // Clean up old processed IDs after 10 minutes
+        if (processedMessageIds.has(messageId)) {
+            console.log("Duplicate message ignored:", messageId);
+            return;
+        }
+
+        processedMessageIds.add(messageId);
+
         setTimeout(() => {
             processedMessageIds.delete(messageId);
         }, 10 * 60 * 1000);
 
-        // Ignore non-text messages
-        if (!messageText) {
-            return;
-        }
-
         const lowerText = messageText.toLowerCase();
         let replyText = "";
-
         let session = userSessions[from];
 
-        // Only create a new session when the user intentionally starts
-        if (!session && ["hi", "hello", "menu"].includes(lowerText)) {
+        if (!session && (lowerText === "hi" || lowerText === "hello" || lowerText === "menu")) {
             userSessions[from] = {
                 step: "menu",
                 booking: {},
@@ -305,7 +280,6 @@ app.post("/webhook", async (req, res) => {
             session = userSessions[from];
         }
 
-        // If no session exists and the user didn't start properly
         if (!session) {
             await sendWhatsAppMessage(from, "Reply 'Hi' to see the menu again.");
             return;
@@ -313,58 +287,77 @@ app.post("/webhook", async (req, res) => {
 
         const latestBooking = await getLatestConfirmedBookingByPhone(from);
 
-        if (
-            ["hi", "hello", "menu"].includes(lowerText) &&
-            latestBooking
-        ) {
+        if ((lowerText === "hi" || lowerText === "hello" || lowerText === "menu") && latestBooking) {
             session.step = "menu";
             session.booking = {};
             session.rescheduleBookingId = null;
 
             replyText =
-                `Welcome back ${latestBooking.name} 👋\n\n` +
+                `Welcome back ${latestBooking.name}\n\n` +
                 `Please choose an option:\n` +
                 `1. Book appointment\n` +
                 `2. Service prices\n` +
                 `3. Opening hours\n` +
                 `4. Cancel latest booking\n` +
                 `5. Reschedule latest booking`;
-        } else if (["hi", "hello", "menu"].includes(lowerText)) {
+        } else if (lowerText === "hi" || lowerText === "hello" || lowerText === "menu") {
             session.step = "menu";
             session.booking = {};
             session.rescheduleBookingId = null;
 
             replyText =
-                "Hello 👋 Welcome to BarberBot.\n\nPlease choose an option:\n1. Book appointment\n2. Service prices\n3. Opening hours\n4. Cancel latest booking\n5. Reschedule latest booking";
+                "Hello. Welcome to BarberBot.\n\n" +
+                "Please choose an option:\n" +
+                "1. Book appointment\n" +
+                "2. Service prices\n" +
+                "3. Opening hours\n" +
+                "4. Cancel latest booking\n" +
+                "5. Reschedule latest booking";
         } else if (session.step === "menu" && lowerText === "1") {
             session.step = "ask_name";
             session.booking = {};
-            replyText = "Great ✂️ Please enter your full name.";
+            replyText = "Please enter your full name.";
         } else if (session.step === "ask_name") {
             session.booking.name = messageText;
             session.booking.phone = from;
             session.step = "ask_service";
+
             replyText =
-                "What barber service would you like?\n\nExamples:\n- Haircut\n- Skin fade\n- Beard trim\n- Haircut and beard\n- Line up";
+                "What barber service would you like?\n\n" +
+                "Examples:\n" +
+                "- Haircut\n" +
+                "- Skin fade\n" +
+                "- Beard trim\n" +
+                "- Haircut and beard\n" +
+                "- Line up";
         } else if (session.step === "ask_service") {
             session.booking.service = messageText;
             session.step = "ask_date";
+
             replyText =
-                "Please enter your preferred date in this format:\nYYYY-MM-DD\n\nExample: 2026-04-10";
+                "Please enter your preferred date in this format:\n" +
+                "YYYY-MM-DD\n\n" +
+                "Example: 2026-04-10";
         } else if (session.step === "ask_date") {
             if (!isValidDate(messageText)) {
                 replyText =
-                    "Invalid date format ❌\nPlease enter the date as YYYY-MM-DD.\nExample: 2026-04-10";
+                    "Invalid date format.\n" +
+                    "Please enter the date as YYYY-MM-DD.\n" +
+                    "Example: 2026-04-10";
             } else {
                 session.booking.date = messageText;
                 session.step = "ask_time";
+
                 replyText =
-                    "Please enter your preferred time in 24-hour format.\nExample: 14:00";
+                    "Please enter your preferred time in 24-hour format.\n" +
+                    "Example: 14:00";
             }
         } else if (session.step === "ask_time") {
             if (!isValidTime(messageText)) {
                 replyText =
-                    "Invalid time format ❌\nPlease enter the time as HH:MM.\nExample: 14:00";
+                    "Invalid time format.\n" +
+                    "Please enter the time as HH:MM.\n" +
+                    "Example: 14:00";
             } else {
                 session.booking.time = messageText;
 
@@ -372,25 +365,24 @@ app.post("/webhook", async (req, res) => {
 
                 if (taken) {
                     replyText =
-                        `Sorry ❌ ${session.booking.date} at ${session.booking.time} is already booked.\n\nPlease enter another time in HH:MM format.`;
+                        `Sorry, ${session.booking.date} at ${session.booking.time} is already booked.\n\n` +
+                        "Please enter another time in HH:MM format.";
                 } else {
                     session.step = "await_confirmation";
+
                     replyText =
-                        `Please confirm your barber appointment ✅\n\n` +
+                        "Please confirm your barber appointment.\n\n" +
                         `Name: ${session.booking.name}\n` +
                         `Phone: ${session.booking.phone}\n` +
                         `Service: ${session.booking.service}\n` +
                         `Date: ${session.booking.date}\n` +
                         `Time: ${session.booking.time}\n\n` +
-                        `Reply YES to confirm\n` +
-                        `Reply NO to cancel`;
+                        "Reply YES to confirm\n" +
+                        "Reply NO to cancel";
                 }
             }
         } else if (session.step === "await_confirmation" && lowerText === "yes") {
-            const reminderAt = buildReminderTime(
-                session.booking.date,
-                session.booking.time
-            );
+            const reminderAt = buildReminderTime(session.booking.date, session.booking.time);
 
             const confirmedBooking = new Booking({
                 name: session.booking.name,
@@ -399,21 +391,21 @@ app.post("/webhook", async (req, res) => {
                 date: session.booking.date,
                 time: session.booking.time,
                 status: "confirmed",
-                reminderAt,
+                reminderAt: reminderAt,
                 reminderSent: false
             });
 
             await confirmedBooking.save();
 
             replyText =
-                `Your barber appointment is confirmed 🎉\n\n` +
+                "Your barber appointment is confirmed.\n\n" +
                 `Booking ID: ${confirmedBooking._id}\n` +
                 `Name: ${confirmedBooking.name}\n` +
                 `Service: ${confirmedBooking.service}\n` +
                 `Date: ${confirmedBooking.date}\n` +
                 `Time: ${confirmedBooking.time}\n\n` +
-                `You will receive a reminder message 24 hours before your appointment.\n\n` +
-                `Thank you for booking with BarberBot.`;
+                "You will receive a reminder message 24 hours before your appointment.\n\n" +
+                "Thank you for booking with BarberBot.";
 
             session.step = "menu";
             session.booking = {};
@@ -425,16 +417,23 @@ app.post("/webhook", async (req, res) => {
             session.rescheduleBookingId = null;
         } else if (lowerText === "2") {
             replyText =
-                "Our barber services and prices include:\n- Haircut: £15\n- Skin fade: £20\n- Beard trim: £10\n- Haircut and beard: £25\n- Line up: £10";
+                "Our barber services and prices include:\n" +
+                "- Haircut: £15\n" +
+                "- Skin fade: £20\n" +
+                "- Beard trim: £10\n" +
+                "- Haircut and beard: £25\n" +
+                "- Line up: £10";
         } else if (lowerText === "3") {
             replyText =
-                "Our opening hours are:\nMon-Sat: 9:00 AM - 9:00 PM\nSunday: Closed";
+                "Our opening hours are:\n" +
+                "Mon-Sat: 9:00 AM - 9:00 PM\n" +
+                "Sunday: Closed";
         } else if (lowerText === "4" || lowerText === "cancel booking") {
             const cancelledBooking = await cancelLatestBooking(from);
 
             if (cancelledBooking) {
                 replyText =
-                    `Your latest booking has been cancelled ❌\n\n` +
+                    "Your latest booking has been cancelled.\n\n" +
                     `Service: ${cancelledBooking.service}\n` +
                     `Date: ${cancelledBooking.date}\n` +
                     `Time: ${cancelledBooking.time}`;
@@ -451,17 +450,20 @@ app.post("/webhook", async (req, res) => {
             } else {
                 session.step = "reschedule_date";
                 session.rescheduleBookingId = latestBooking._id;
+
                 replyText =
-                    `Your latest booking is:\n\n` +
+                    "Your latest booking is:\n\n" +
                     `Service: ${latestBooking.service}\n` +
                     `Date: ${latestBooking.date}\n` +
                     `Time: ${latestBooking.time}\n\n` +
-                    `Please enter the new date in YYYY-MM-DD format.`;
+                    "Please enter the new date in YYYY-MM-DD format.";
             }
         } else if (session.step === "reschedule_date") {
             if (!isValidDate(messageText)) {
                 replyText =
-                    "Invalid date format ❌\nPlease enter the date as YYYY-MM-DD.\nExample: 2026-04-10";
+                    "Invalid date format.\n" +
+                    "Please enter the date as YYYY-MM-DD.\n" +
+                    "Example: 2026-04-10";
             } else {
                 session.booking.newDate = messageText;
                 session.step = "reschedule_time";
@@ -470,7 +472,9 @@ app.post("/webhook", async (req, res) => {
         } else if (session.step === "reschedule_time") {
             if (!isValidTime(messageText)) {
                 replyText =
-                    "Invalid time format ❌\nPlease enter the time as HH:MM.\nExample: 14:00";
+                    "Invalid time format.\n" +
+                    "Please enter the time as HH:MM.\n" +
+                    "Example: 14:00";
             } else {
                 session.booking.newTime = messageText;
 
@@ -482,9 +486,10 @@ app.post("/webhook", async (req, res) => {
 
                 if (taken) {
                     replyText =
-                        `Sorry ❌ ${session.booking.newDate} at ${session.booking.newTime} is already booked.\n\nPlease enter another time.`;
+                        `Sorry, ${session.booking.newDate} at ${session.booking.newTime} is already booked.\n\n` +
+                        "Please enter another time.";
                 } else {
-                    const updated = await Booking.findByIdAndUpdate(
+                    const updatedBooking = await Booking.findByIdAndUpdate(
                         session.rescheduleBookingId,
                         {
                             date: session.booking.newDate,
@@ -499,13 +504,13 @@ app.post("/webhook", async (req, res) => {
                         { new: true }
                     );
 
-                    if (updated) {
+                    if (updatedBooking) {
                         replyText =
-                            `Your booking has been rescheduled successfully ✅\n\n` +
-                            `Service: ${updated.service}\n` +
-                            `New Date: ${updated.date}\n` +
-                            `New Time: ${updated.time}\n\n` +
-                            `A new 24-hour reminder will be sent before your appointment.`;
+                            "Your booking has been rescheduled successfully.\n\n" +
+                            `Service: ${updatedBooking.service}\n` +
+                            `New Date: ${updatedBooking.date}\n` +
+                            `New Time: ${updatedBooking.time}\n\n` +
+                            "A new 24-hour reminder will be sent before your appointment.";
                     } else {
                         replyText = "Sorry, the booking could not be rescheduled.";
                     }
@@ -516,7 +521,7 @@ app.post("/webhook", async (req, res) => {
                 }
             }
         } else {
-            replyText = "I didn’t understand that. Reply 'Hi' to see the menu again.";
+            replyText = "I did not understand that. Reply 'Hi' to see the menu again.";
         }
 
         await sendWhatsAppMessage(from, replyText);
